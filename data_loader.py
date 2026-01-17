@@ -1,0 +1,132 @@
+import pandas as pd
+import yfinance as yf
+import requests
+import io
+import streamlit as st
+from datetime import datetime, timedelta
+
+# FRED Series IDs
+FRED_SERIES = {
+    "M1 Money Supply": "M1SL",
+    "M2 Money Supply": "M2SL",
+    "Monetary Base": "BOGMBASE",
+    "CPI (Inflation)": "CPIAUCSL",
+    "Median House Price": "MSPUS",
+}
+
+# Yahoo Finance Tickers
+ASSET_TICKERS = {
+    "Gold": "GC=F",
+    "Silver": "SI=F",
+    "S&P 500": "^GSPC",
+    "NASDAQ 100": "^IXIC",
+    "Dow Jones": "^DJI",
+    "10Y Treasury Yield": "^TNX",
+    "Bitcoin": "BTC-USD",
+    "Crude Oil": "CL=F",
+    "EUR/USD": "EURUSD=X",
+}
+
+def fetch_fred_data(series_id):
+    """Fetch data from FRED using the CSV download link."""
+    url = f"https://fred.stlouisfed.org/graph/fredgraph.csv?id={series_id}"
+    try:
+        response = requests.get(url)
+        response.raise_for_status()
+        df = pd.read_csv(io.StringIO(response.text))
+        # FRED CSVs use 'observation_date' as the header
+        date_col = 'observation_date' if 'observation_date' in df.columns else 'DATE'
+        df[date_col] = pd.to_datetime(df[date_col])
+        df = df.set_index(date_col)
+        # Handle cases where value might be '.'
+        df[series_id] = pd.to_numeric(df[series_id], errors='coerce')
+        return df.dropna()
+    except Exception as e:
+        st.error(f"Error fetching FRED data for {series_id}: {e}")
+        return pd.DataFrame()
+
+def fetch_yfinance_data(ticker, period="max"):
+    """Fetch data from Yahoo Finance."""
+    try:
+        data = yf.download(ticker, period=period)
+        if data.empty:
+            return pd.DataFrame()
+        
+        # Handle potential MultiIndex columns from yfinance
+        if isinstance(data.columns, pd.MultiIndex):
+            data.columns = data.columns.get_level_values(0)
+            
+        if 'Close' in data.columns:
+            df = data[['Close']].copy()
+        elif 'Adj Close' in data.columns:
+            df = data[['Adj Close']].copy()
+        else:
+            return pd.DataFrame()
+
+        df.index = pd.to_datetime(df.index)
+        # Ensure the index is timezone naive for consistency
+        if df.index.tz is not None:
+            df.index = df.index.tz_localize(None)
+        df.columns = [ticker]
+        return df
+    except Exception as e:
+        st.error(f"Error fetching YFinance data for {ticker}: {e}")
+        return pd.DataFrame()
+
+@st.cache_data(ttl=3600)
+def get_combined_data(fred_series_list, asset_ticker_list, period="10y"):
+    """
+    Fetch all requested data and align dates.
+    Returns a multi-column DataFrame.
+    """
+    # Convert list to tuple for caching (lists are not hashable)
+    fred_series_list = tuple(fred_series_list)
+    asset_ticker_list = tuple(asset_ticker_list)
+    
+    all_dfs = []
+    
+    # Fetch FRED data
+    for name in fred_series_list:
+        series_id = FRED_SERIES.get(name)
+        if series_id:
+            df = fetch_fred_data(series_id)
+            if not df.empty:
+                df.columns = [name]
+                all_dfs.append(df)
+    
+    # Fetch Asset data
+    for name in asset_ticker_list:
+        ticker = ASSET_TICKERS.get(name)
+        if ticker:
+            df = fetch_yfinance_data(ticker, period=period)
+            if not df.empty:
+                df.columns = [name]
+                all_dfs.append(df)
+    
+    if not all_dfs:
+        return pd.DataFrame()
+    
+    # Merge all dataframes on index
+    combined_df = pd.concat(all_dfs, axis=1)
+    
+    # Forward fill missing values (common in macro data vs daily assets)
+    combined_df = combined_df.ffill().dropna()
+    
+    return combined_df
+
+def normalize_data(df, mode="Index=100"):
+    """
+    Normalize the dataframe based on the selected mode.
+    """
+    if df.empty:
+        return df
+        
+    if mode == "Index=100":
+        return (df / df.iloc[0]) * 100
+    elif mode == "% Change":
+        return df.pct_change() * 100
+    elif mode == "Log Scale":
+        import numpy as np
+        return np.log(df)
+    
+    return df
