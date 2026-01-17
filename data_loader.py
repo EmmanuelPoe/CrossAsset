@@ -12,6 +12,10 @@ FRED_SERIES = {
     "Monetary Base": "BOGMBASE",
     "CPI (Inflation)": "CPIAUCSL",
     "Median House Price": "MSPUS",
+    "US Dollar Index": "DTWEXBGS",
+    "Yield Curve (10Y-2Y)": "T10Y2Y",
+    "Fed Funds Rate": "FEDFUNDS",
+    "M2 Money Velocity": "M2V",
 }
 
 # Yahoo Finance Tickers
@@ -178,3 +182,27 @@ def calculate_portfolio(df, weights_dict):
                 normalized = (df[asset] / first_val) * 100
                 result += normalized * (weight / total_weight)
     return result
+
+def calculate_regression_stats(x_series, y_series):
+    """
+    Calculate Beta and R-Squared for two series.
+    Assumes series are already aligned and percentage changes.
+    """
+    import numpy as np
+    from sklearn.linear_model import LinearRegression
+    
+    # Drop NAs
+    df = pd.DataFrame({'x': x_series, 'y': y_series}).dropna()
+    if df.empty or len(df) < 2:
+        return 0, 0
+    
+    X = df[['x']].values
+    y = df['y'].values
+    
+    model = LinearRegression()
+    model.fit(X, y)
+    
+    beta = model.coef_[0]
+    r_squared = model.score(X, y)
+    
+    return beta, r_squared

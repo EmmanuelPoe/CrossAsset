@@ -4,15 +4,28 @@ import plotly.graph_objects as go
 from datetime import datetime, timedelta
 from data_loader import (
     FRED_SERIES, ASSET_TICKERS, get_combined_data, normalize_data,
-    calculate_technical_indicators, apply_lead_lag, calculate_portfolio
+    calculate_technical_indicators, apply_lead_lag, calculate_portfolio,
+    calculate_regression_stats
 )
 
 # Page config
 st.set_page_config(page_title="Financial Asset vs Money Supply", layout="wide")
 
-# Theme / Custom CSS for "Premium" feel
+# Theme / Custom CSS for "Premium" feel & UI Cleanup
 st.markdown("""
 <style>
+    /* Clean up Streamlit UI */
+    #MainMenu {visibility: hidden;}
+    header {visibility: hidden;}
+    footer {visibility: hidden;}
+    
+    .block-container {
+        padding-top: 0rem;
+        padding-bottom: 0rem;
+        padding-left: 5rem;
+        padding-right: 5rem;
+    }
+
     .main {
         background-color: #0e1117;
     }
@@ -88,6 +101,7 @@ st.sidebar.subheader("📊 Visual Overlays")
 show_sma = st.sidebar.checkbox("SMA (200-day)", help="Simple Moving Average: The average price over the last 200 days. It helps smooth out daily noise to show the long-term trend. If the price is above the line, the trend is generally considered 'Up'.")
 show_bb = st.sidebar.checkbox("Bollinger Bands", help="A tool that shows the 'typical' price range for an asset. If the price touches the upper or lower bands, it may be moving too fast relative to its recent history.")
 show_events = st.sidebar.checkbox("Show Macro Events", value=True, help="Mark significant moments in history (like major crises or stimulus packages) to see how they impacted the data.")
+show_regimes = st.sidebar.checkbox("Show Economic Regimes", help="Highlights periods of high liquidity growth (M2 > 5% annual rate). Green backgrounds indicate 'Easy Money' regimes.")
 
 # 6. Real Return (Denominator)
 st.sidebar.divider()
@@ -240,6 +254,51 @@ else:
                         fig.add_vline(x=event_date, line_width=1, line_dash="dash", line_color="gray")
                         fig.add_annotation(x=event_date, y=1.05, yref="paper", text=event['label'], showarrow=False, font=dict(size=10))
 
+            # Economic Regimes Shading (Uses M2 Growth as the proxy for 'Easy Money')
+            if show_regimes:
+                regime_series = None
+                if "M2 Money Supply" in combined_df.columns:
+                    regime_series = combined_df["M2 Money Supply"]
+                else:
+                    # Fetch M2 specifically for shading if not selected
+                    with st.spinner("Calculating regimes..."):
+                        regime_df = get_combined_data(["M2 Money Supply"], [], period=fetch_period)
+                        if not regime_df.empty:
+                            regime_series = regime_df["M2 Money Supply"]
+                
+                if regime_series is not None:
+                    # Calculate 1-year growth (Approx 252 trading days or 12 months)
+                    # We'll use 1year lookback. 
+                    m2_growth = regime_series.pct_change(periods=252) if len(regime_series) > 252 else regime_series.pct_change(periods=max(1, len(regime_series)//10))
+                    easy_money = m2_growth > 0.05 # 5% growth threshold
+                    
+                    # Create rects for easy money periods
+                    in_regime = False
+                    start_date_regime = None
+                    for i in range(len(easy_money)):
+                        # Handle NaNs in growth
+                        val = easy_money.iloc[i]
+                        if pd.isna(val): continue
+                        
+                        if val and not in_regime:
+                            in_regime = True
+                            start_date_regime = easy_money.index[i]
+                        elif not val and in_regime:
+                            in_regime = False
+                            end_date_regime = easy_money.index[i]
+                            fig.add_vrect(
+                                x0=start_date_regime, x1=end_date_regime,
+                                fillcolor="green", opacity=0.15, line_width=0,
+                                layer="below"
+                            )
+                    if in_regime:
+                        fig.add_vrect(
+                            x0=start_date_regime, x1=easy_money.index[-1],
+                            fillcolor="green", opacity=0.15, line_width=0,
+                            layer="below"
+                        )
+                    st.caption("✅ Economic Regimes: **Green zones** represent periods where M2 Money Supply grew faster than 5% per year ('Easy Money').")
+
             fig.update_layout(
                 template="plotly_dark",
                 title=f"Comparison: {', '.join(selected_refs + selected_assets)}",
@@ -351,6 +410,13 @@ else:
                         yaxis_title=f"{y_axis} % Change (Monthly)",
                         height=600
                     )
+                    
+                    # Display Stats
+                    beta, r_squared = calculate_regression_stats(scatter_df[x_axis], scatter_df[y_axis])
+                    c1, c2 = st.columns(2)
+                    c1.metric("Beta (Sensitivity)", f"{beta:.2f}", help="How much the Y-axis asset moves for every 1% move in the X-axis asset.")
+                    c2.metric("R-Squared (Explanatory Power)", f"{r_squared:.2%}", help="How much of the movement in the Y-axis asset is explained by the X-axis asset. 100% means a perfect mathematical link.")
+                    
                     st.plotly_chart(fig_scatter, width='stretch')
             else:
                 st.info("Select at least two assets to view scatter analysis.")
