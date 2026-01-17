@@ -41,17 +41,20 @@ chmod u+x run.sh
 - **Rolling Correlation**: See how the relationship between money supply and an asset evolves over time.
 
 ### 3. Advanced Macro Analytics
-- **⚖️ Real Return Mode**: Denominate any asset in terms of **Gold**, **M2 Money Supply**, or **CPI** with a single click.
+- **🕵️ Discovery (Macro Stories)**: 1-click presets for historical regimes (e.g., "The Gold Standard", "2008 Financial Crisis", "COVID Stimulus").
+- **⚖️ Real Return Mode**: Denominate any asset in terms of **Gold**, **M2 Money Supply**, or **CPI** with dense, daily-aligned math.
 - **📈 Technical Overlays**: Overlay **200-day SMA** and **Bollinger Bands** to identify macro trends.
-- **⏩ Lead/Lag Shift**: Use interactive sliders to find leading or lagging relationships in correlation data.
-- **🏗 Portfolio Simulation**: Build a custom weighted basket of assets and track its performance against the money supply.
+- **⏩ Lead/Lag Shift**: Find leading or lagging relationships by shifting asset prices relative to money supply data.
+- **🏗 Portfolio Simulation**: Build a custom weighted basket and track its performance against the denominator of your choice.
+- **🎯 Asset Sensitivity Map**: A radar chart (cluster map) visualizing how assets correlate with key macro drivers (DXY, Yield Curve, M2).
+- **🤖 Macro Insights**: Contextual analysis explaining correlations, beta sensitivity, and current economic regime warnings.
 - **💰 Purchasing Power Calculator**: Calculate the precise devaluation of a specific dollar amount relative to hard assets since any historical date.
-- **🏛 Macro Event Timeline**: Visual markers for significant economic shifts (Nixon Shock, COVID Stimulus, etc.).
 
 ### 4. Smart Timeline & Export
-- Presets for **1Y, 5Y, 10Y, 20Y**, and **Max**.
+- **Max-First Data**: The app fetches full historical context in the background, allowing instant switching between **1Y, 5Y, 10Y, 20Y**, and **Max** without data loss.
+- **Inclusive Normalization**: Every asset is indexed relative to its *own* first available price, ensuring older metrics (like M1) and newer assets (like Bitcoin) track perfectly on the same chart.
 - **Custom Range**: Precise date selection for historical event analysis.
-- **💾 CSV Export**: Download the fully processed and aligned dataset for further offline analysis.
+- **💾 CSV Export**: Download the fully processed and aligned dataset for offline research.
 
 ---
 
