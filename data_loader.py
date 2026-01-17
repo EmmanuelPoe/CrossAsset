@@ -130,3 +130,51 @@ def normalize_data(df, mode="Index=100"):
         return np.log(df)
     
     return df
+
+def calculate_technical_indicators(df, window=200):
+    """Calculate SMA and Bollinger Bands for each column."""
+    results = {}
+    for col in df.columns:
+        # Standardize data to numeric to avoid rolling mean errors on mixed types
+        series = pd.to_numeric(df[col], errors='coerce')
+        sma = series.rolling(window=window).mean()
+        std = series.rolling(window=window).std()
+        results[f"{col}_SMA_{window}"] = sma
+        results[f"{col}_BB_Upper"] = sma + (std * 2)
+        results[f"{col}_BB_Lower"] = sma - (std * 2)
+    return pd.DataFrame(results, index=df.index)
+
+def apply_lead_lag(df, focus_col, shift_months=0):
+    """
+    Shifts the entire dataframe EXCEPT the focus_col by shift_months.
+    Focus_col is typically the Money Supply metric.
+    """
+    if shift_months == 0:
+        return df
+    
+    shifted_df = df.copy()
+    other_cols = [c for c in df.columns if c != focus_col]
+    
+    # Approx 30 days per month shift
+    # Shift forward means Focus leads.
+    shifted_df[other_cols] = shifted_df[other_cols].shift(shift_months * 30)
+    return shifted_df.dropna()
+
+def calculate_portfolio(df, weights_dict):
+    """Calculate a weighted portfolio index from columns."""
+    if not weights_dict:
+        return pd.Series(0.0, index=df.index)
+        
+    result = pd.Series(0.0, index=df.index)
+    total_weight = sum(weights_dict.values())
+    if total_weight == 0:
+        return result
+        
+    for asset, weight in weights_dict.items():
+        if asset in df.columns:
+            # Normalize each asset to 100 at start of the visible slice for weighted sum
+            first_val = df[asset].iloc[0]
+            if first_val != 0:
+                normalized = (df[asset] / first_val) * 100
+                result += normalized * (weight / total_weight)
+    return result

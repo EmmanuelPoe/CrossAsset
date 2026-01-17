@@ -2,7 +2,10 @@ import streamlit as st
 import pandas as pd
 import plotly.graph_objects as go
 from datetime import datetime, timedelta
-from data_loader import FRED_SERIES, ASSET_TICKERS, get_combined_data, normalize_data
+from data_loader import (
+    FRED_SERIES, ASSET_TICKERS, get_combined_data, normalize_data,
+    calculate_technical_indicators, apply_lead_lag, calculate_portfolio
+)
 
 # Page config
 st.set_page_config(page_title="Financial Asset vs Money Supply", layout="wide")
@@ -38,7 +41,8 @@ st.sidebar.subheader("Reference Metrics")
 selected_refs = st.sidebar.multiselect(
     "Select Money Supply or Inflation",
     options=list(FRED_SERIES.keys()),
-    default=["M2 Money Supply"]
+    default=["M2 Money Supply"],
+    help="Reference metrics like M2 (Money Supply) or CPI (Inflation) represent the 'supply' side of the economy. Use these to see how asset prices react to changes in the total amount of money in circulation."
 )
 
 # 2. Asset Classes
@@ -46,7 +50,8 @@ st.sidebar.subheader("Asset Classes")
 selected_assets = st.sidebar.multiselect(
     "Select Assets to Compare",
     options=list(ASSET_TICKERS.keys()),
-    default=["Gold", "S&P 500"]
+    default=["Gold", "S&P 500"],
+    help="Select one or more financial assets to track. These are the 'demand' side - items of value that you can buy with your money."
 )
 
 # 3. Time Range
@@ -54,7 +59,8 @@ st.sidebar.subheader("Timeline")
 time_range = st.sidebar.selectbox(
     "Select Period",
     options=["1y", "5y", "10y", "20y", "max", "Custom"],
-    index=2
+    index=2,
+    help="Choose the historical window you want to analyze. Macro trends like money supply usually take years to play out, so longer timeframes (10Y+) are often more revealing."
 )
 
 start_date = None
@@ -65,13 +71,63 @@ if time_range == "Custom":
     start_date = col1.date_input("Start Date", datetime.now() - timedelta(days=365*10))
     end_date = col2.date_input("End Date", datetime.now())
 
-# 4. Normalization
-st.sidebar.subheader("Normalization & Scaling")
+# 4. Portfolio Builder (New Section)
+st.sidebar.divider()
+st.sidebar.subheader("🏗 Portfolio Builder")
+enable_portfolio = st.sidebar.checkbox("Analyze custom portfolio", help="Combine multiple assets into one 'super-asset'. For example, if you hold 50% Stocks and 50% Gold, this will show you the combined performance of that basket.")
+portfolio_weights = {}
+
+if enable_portfolio:
+    for asset in selected_assets:
+        weight = st.sidebar.slider(f"Weight: {asset}", 0, 100, 50)
+        portfolio_weights[asset] = weight
+
+# 5. Technical Indicators & Visuals
+st.sidebar.divider()
+st.sidebar.subheader("📊 Visual Overlays")
+show_sma = st.sidebar.checkbox("SMA (200-day)", help="Simple Moving Average: The average price over the last 200 days. It helps smooth out daily noise to show the long-term trend. If the price is above the line, the trend is generally considered 'Up'.")
+show_bb = st.sidebar.checkbox("Bollinger Bands", help="A tool that shows the 'typical' price range for an asset. If the price touches the upper or lower bands, it may be moving too fast relative to its recent history.")
+show_events = st.sidebar.checkbox("Show Macro Events", value=True, help="Mark significant moments in history (like major crises or stimulus packages) to see how they impacted the data.")
+
+# 6. Real Return (Denominator)
+st.sidebar.divider()
+st.sidebar.subheader("⚖️ Real Return Mode")
+denominate_in = st.sidebar.selectbox(
+    "Denominate Assets In:",
+    options=["USD", "Gold", "M2 Money Supply", "CPI (Inflation)"],
+    index=0,
+    help="By default, assets are measured in Dollars (USD). Changing this allows you to see 'Real Returns'. For example, denominating the S&P 500 in 'Gold' tells you if Stocks are actually getting more valuable, or if the Dollar is just getting weaker."
+)
+
+# 7. Correlation Analysis
+st.sidebar.divider()
+st.sidebar.subheader("⏩ Lead/Lag Shift")
+lead_lag_months = st.sidebar.slider("Shift Assets (Months)", -24, 24, 0, help="Positive shifts OTHER assets forward (Ref leads)")
+
+# 8. Normalization & Scaling
+st.sidebar.divider()
+st.sidebar.subheader("📐 Normalization & Scaling")
 norm_mode = st.sidebar.radio(
     "Adjustment Mode",
     options=["Raw Data", "Index=100", "% Change", "Log Scale"],
-    index=1
+    index=1,
+    help="""
+    - **Raw Data**: Actual prices/levels.
+    - **Index=100**: Resets all assets to 100 at the start. Great for seeing who won the race over time!
+    - **% Change**: Daily/Monthly growth rates.
+    - **Log Scale**: Compresses large price jumps. Useful for comparing tiny assets with huge ones (like Bitcoin).
+    """
 )
+
+# 9. Application Logic
+
+# Main Application Constants
+HISTORICAL_EVENTS = [
+    {"date": "1971-08-15", "label": "Nixon shock (End of Gold Standard)"},
+    {"date": "2008-09-15", "label": "Lehman Brothers Bankruptcy"},
+    {"date": "2020-03-15", "label": "COVID Stimulus Start"},
+    {"date": "2022-03-16", "label": "Fed Begins Rate Hikes"}
+]
 
 # Main Application Logic
 if not selected_refs and not selected_assets:
@@ -94,21 +150,52 @@ else:
     if combined_df.empty:
         st.error("No data found for the selected combination and timeframe.")
     else:
+        # --- APPLIED ANALYTICS ---
+        
+        # 1. Real Return Division
+        if denominate_in != "USD":
+            denom_series = None
+            if denominate_in == "Gold" and "Gold" in combined_df.columns:
+                denom_series = combined_df["Gold"]
+            elif denominate_in in combined_df.columns:
+                denom_series = combined_df[denominate_in]
+            else:
+                # Force fetch denominator if it wasn't selected
+                with st.spinner(f"Fetching {denominate_in} for denominator..."):
+                    denom_df = get_combined_data([denominate_in], [], period=fetch_period)
+                    if not denom_df.empty:
+                        denom_series = denom_df[denominate_in]
+            
+            if denom_series is not None:
+                # Align and divide
+                combined_df = combined_df.divide(denom_series, axis=0).dropna()
+                st.info(f"Visualizing relative value in terms of **{denominate_in}**")
+
+        # 2. Portfolio Calculation
+        if enable_portfolio and portfolio_weights:
+            portfolio_series = calculate_portfolio(combined_df, portfolio_weights)
+            combined_df["🏢 Custom Portfolio"] = portfolio_series
+
+        # 3. Lead/Lag Shifting
+        # Positive shift means Ref LED (we pull Assets BACK in time to match Ref)
+        shifted_df = apply_lead_lag(combined_df, selected_refs[0] if selected_refs else combined_df.columns[0], -lead_lag_months)
+
         # View Navigator (Persistent Tabs)
         st.session_state.view_mode = st.radio(
             "Select View Mode",
-            options=["📈 Time Series View", "📊 Correlation Heatmap", "🎯 Scatter Analysis"],
+            options=["📈 Time Series View", "📊 Correlation Heatmap", "🎯 Scatter Analysis", "💰 Purchasing Power"],
             horizontal=True,
             label_visibility="collapsed"
         )
         
-        # Normalize data based on mode
-        plot_df = normalize_data(combined_df, mode=norm_mode)
+        # Normalize data based on mode (Use shifted_df so chart reflects the shift)
+        plot_df = normalize_data(shifted_df, mode=norm_mode)
 
         if st.session_state.view_mode == "📈 Time Series View":
             st.divider()
             fig = go.Figure()
             
+            # Base Plots
             for col in plot_df.columns:
                 fig.add_trace(go.Scatter(
                     x=plot_df.index,
@@ -118,14 +205,49 @@ else:
                     hovertemplate='%{y:.2f}<extra></extra>'
                 ))
 
+            # Technical Indicators
+            if show_sma or show_bb:
+                ti_df = calculate_technical_indicators(shifted_df)
+                # Normalize TIs if needed
+                if norm_mode == "Index=100":
+                    ti_df = (ti_df.divide(shifted_df.iloc[0].values.repeat(3), axis=1)) * 100
+                
+                for asset in selected_assets:
+                    if show_sma:
+                        fig.add_trace(go.Scatter(
+                            x=ti_df.index, y=ti_df[f"{asset}_SMA_200"],
+                            name=f"{asset} 200-SMA", line=dict(dash='dot', width=1),
+                            opacity=0.7
+                        ))
+                    if show_bb:
+                        fig.add_trace(go.Scatter(
+                            x=ti_df.index, y=ti_df[f"{asset}_BB_Upper"],
+                            name=f"{asset} BB Upper", line=dict(width=0),
+                            showlegend=False
+                        ))
+                        fig.add_trace(go.Scatter(
+                            x=ti_df.index, y=ti_df[f"{asset}_BB_Lower"],
+                            name=f"{asset} BB Lower", line=dict(width=0),
+                            fill='tonexty', fillcolor='rgba(100,100,100,0.1)',
+                            showlegend=False
+                        ))
+
+            # Macro Event Markers
+            if show_events:
+                for event in HISTORICAL_EVENTS:
+                    event_date = pd.to_datetime(event['date'])
+                    if event_date >= combined_df.index[0] and event_date <= combined_df.index[-1]:
+                        fig.add_vline(x=event_date, line_width=1, line_dash="dash", line_color="gray")
+                        fig.add_annotation(x=event_date, y=1.05, yref="paper", text=event['label'], showarrow=False, font=dict(size=10))
+
             fig.update_layout(
                 template="plotly_dark",
                 title=f"Comparison: {', '.join(selected_refs + selected_assets)}",
                 xaxis_title="Date",
-                yaxis_title=norm_mode,
+                yaxis_title=norm_mode if denominate_in == "USD" else f"{norm_mode} (Real in {denominate_in})",
                 height=600,
                 legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
-                margin=dict(l=20, r=20, t=60, b=20),
+                margin=dict(l=20, r=20, t=80, b=20),
                 hovermode="x unified"
             )
             st.plotly_chart(fig, width='stretch')
@@ -133,7 +255,8 @@ else:
             # Rolling Correlation (Simple version: first ref vs first asset selected)
             if len(selected_refs) > 0 and len(selected_assets) > 0:
                 st.subheader(f"Rolling Correlation: {selected_refs[0]} vs {selected_assets[0]}")
-                window = st.slider("Correlation Window (Days)", 30, 365, 180)
+                st.info("💡 **What is Rolling Correlation?** It measures how 'synced up' two assets are over a moving window. A score of 1.0 means they move perfectly together, while -1.0 means they move in opposite directions.")
+                window = st.slider("Correlation Window (Days)", 30, 365, 180, help="The number of days to look back for each correlation calculation. 180 days is a common standard for macro trends.")
                 
                 # Use pct change for correlation as it's better for non-stationary data
                 if selected_refs[0] in combined_df.columns and selected_assets[0] in combined_df.columns:
@@ -161,12 +284,12 @@ else:
         elif st.session_state.view_mode == "📊 Correlation Heatmap":
             st.divider()
             st.subheader("Asset Correlation Matrix (Monthly Returns)")
-            st.markdown("""
-            *Note: Correlations are calculated on **monthly percentage changes** to align smoothed macro data (M2/CPI) with daily financial assets.*
-            """)
+            st.info("🌡️ **The Heatmap**: This grid shows how closely assets move together. **Deep Blue (+1)** means they move in lockstep. **Deep Red (-1)** means they move opposite. **White (0)** means they have no relationship. It helps you see if your portfolio is truly diversified.")
+            if lead_lag_months != 0:
+                st.caption(f"⚠️ Data shifted by **{lead_lag_months} months** for correlation lead/lag analysis.")
             
             # Resample to Monthly for meaningful macro correlation
-            monthly_df = combined_df.resample('ME').last()
+            monthly_df = shifted_df.resample('ME').last()
             corr_matrix = monthly_df.pct_change().corr()
             
             fig_heatmap = go.Figure(data=go.Heatmap(
@@ -189,6 +312,7 @@ else:
         elif st.session_state.view_mode == "🎯 Scatter Analysis":
             st.divider()
             st.subheader("Scatter Relationship")
+            st.info("🎯 **Scatter Analysis**: We plot the monthly changes of two items against each other. The **Trendline** shows the general relationship. If it points up, the assets tend to grow together. The tighter the dots are to the line, the stronger that relationship is.")
             if len(selected_refs + selected_assets) >= 2:
                 col1, col2 = st.columns(2)
                 x_axis = col1.selectbox("X-Axis Asset", options=selected_refs + selected_assets, index=0)
@@ -198,7 +322,7 @@ else:
                     st.warning("Please select two different assets for comparison.")
                 else:
                     # Resample for cleaner scatter plots
-                    scatter_df = combined_df[[x_axis, y_axis]].resample('ME').last().pct_change().dropna()
+                    scatter_df = shifted_df[[x_axis, y_axis]].resample('ME').last().pct_change().dropna()
                     
                     fig_scatter = go.Figure()
                     fig_scatter.add_trace(go.Scatter(
@@ -230,6 +354,52 @@ else:
                     st.plotly_chart(fig_scatter, width='stretch')
             else:
                 st.info("Select at least two assets to view scatter analysis.")
+
+        elif st.session_state.view_mode == "💰 Purchasing Power":
+            st.divider()
+            st.subheader("💸 Purchasing Power Calculator")
+            st.write("How has the value of your cash changed relative to these assets?")
+            st.info("🧪 **Calculation**: We take your cash amount and divide it by the price growth of each asset. It answers the question: *'If I saved $1000 in a shoebox, how much [Gold/Stock/Bitcoin] would that $1000 buy today compared to back then?'*")
+            
+            col1, col2 = st.columns(2)
+            amount = col1.number_input("Original Amount ($)", value=1000.0)
+            base_date = col2.date_input("Comparison Start Date", value=combined_df.index[0])
+            
+            # Find closest date in index
+            start_ts = pd.to_datetime(base_date)
+            if start_ts < combined_df.index[0]:
+                st.warning("Start date is before available data. Using earliest possible date.")
+                start_ts = combined_df.index[0]
+            
+            idx = combined_df.index.get_indexer([start_ts], method='nearest')[0]
+            start_prices = combined_df.iloc[idx]
+            current_prices = combined_df.iloc[-1]
+            
+            # Change in purchasing power
+            pp_results = []
+            for asset in combined_df.columns:
+                change_factor = current_prices[asset] / start_prices[asset]
+                current_value = amount / change_factor
+                pp_results.append({
+                    "Asset": asset,
+                    "Current Value of Original $": f"${current_value:,.2f}",
+                    "Purchasing Power Change": f"{(1/change_factor - 1):.2%}"
+                })
+            
+            st.table(pd.DataFrame(pp_results))
+            st.info(f"Summary: A ${amount:,.0f} sum from {combined_df.index[idx].strftime('%Y-%m-%d')} is now worth the amounts above in terms of the assets' current prices.")
+
+        # 9. Export Data (Sidebar)
+        st.sidebar.divider()
+        st.sidebar.subheader("💾 Export Data")
+        csv = combined_df.to_csv().encode('utf-8')
+        st.sidebar.download_button(
+            label="Download Aligned CSV",
+            data=csv,
+            file_name="cross_asset_data.csv",
+            mime="text/csv",
+            key="export_csv"
+        )
 
 # Footer
 st.sidebar.markdown("---")

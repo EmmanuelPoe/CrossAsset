@@ -40,9 +40,18 @@ chmod u+x run.sh
 - **Scatter Analysis**: Deep-dive into the relationship between any two selected metrics with trendline analysis.
 - **Rolling Correlation**: See how the relationship between money supply and an asset evolves over time.
 
-### 3. Smart Timeline
+### 3. Advanced Macro Analytics
+- **⚖️ Real Return Mode**: Denominate any asset in terms of **Gold**, **M2 Money Supply**, or **CPI** with a single click.
+- **📈 Technical Overlays**: Overlay **200-day SMA** and **Bollinger Bands** to identify macro trends.
+- **⏩ Lead/Lag Shift**: Use interactive sliders to find leading or lagging relationships in correlation data.
+- **🏗 Portfolio Simulation**: Build a custom weighted basket of assets and track its performance against the money supply.
+- **💰 Purchasing Power Calculator**: Calculate the precise devaluation of a specific dollar amount relative to hard assets since any historical date.
+- **🏛 Macro Event Timeline**: Visual markers for significant economic shifts (Nixon Shock, COVID Stimulus, etc.).
+
+### 4. Smart Timeline & Export
 - Presets for **1Y, 5Y, 10Y, 20Y**, and **Max**.
 - **Custom Range**: Precise date selection for historical event analysis.
+- **💾 CSV Export**: Download the fully processed and aligned dataset for further offline analysis.
 
 ---
 
