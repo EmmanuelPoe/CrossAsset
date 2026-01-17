@@ -1,5 +1,6 @@
 import streamlit as st
 import pandas as pd
+import numpy as np
 import plotly.graph_objects as go
 from datetime import datetime, timedelta
 from data_loader import (
@@ -11,97 +12,158 @@ from data_loader import (
 # Page config
 st.set_page_config(page_title="Financial Asset vs Money Supply", layout="wide")
 
-# Theme / Custom CSS for "Premium" feel & UI Cleanup
+# Premium UI Constants
+MACRO_STORIES = {
+    "Reset": {"refs": ["M2 Money Supply"], "assets": ["Gold", "S&P 500"], "range": "10y", "denom": "USD", "mode": "Index=100"},
+    "💻 Dot-Com Bubble": {"refs": ["M2 Money Supply"], "assets": ["NASDAQ 100", "S&P 500"], "range": "Custom", "start": "1995-01-01", "end": "2003-01-01", "denom": "USD", "mode": "Index=100"},
+    "🏠 2008 Housing Crisis": {"refs": ["M2 Money Supply", "Median House Price"], "assets": ["S&P 500", "Gold"], "range": "Custom", "start": "2006-01-01", "end": "2013-01-01", "denom": "USD", "mode": "Index=100"},
+    "🖨 Money Printer (COVID)": {"refs": ["M2 Money Supply", "Monetary Base"], "assets": ["Bitcoin", "S&P 500", "Gold"], "range": "Custom", "start": "2020-01-01", "end": "2024-01-01", "denom": "USD", "mode": "Log Scale"},
+    "⚖️ The Gold Standard": {"refs": ["M2 Money Supply"], "assets": ["S&P 500", "Gold", "NASDAQ 100"], "range": "max", "denom": "Gold", "mode": "Index=100"},
+}
+
+HISTORICAL_EVENTS = [
+    {"date": "2008-09-15", "label": "Lehman Brothers Bankruptcy"},
+    {"date": "2020-03-15", "label": "COVID Stimulus Start"},
+    {"date": "2022-03-16", "label": "Fed Begins Rate Hikes"}
+]
+
+# Theme / Custom CSS for "Ultra-Premium" Glassmorphism
 st.markdown("""
 <style>
-    /* Clean up Streamlit UI */
+    /* Premium UI cleanup */
     #MainMenu {visibility: hidden;}
     header {visibility: hidden;}
     footer {visibility: hidden;}
     
     .block-container {
-        padding-top: 0rem;
+        padding-top: 1rem;
         padding-bottom: 0rem;
-        padding-left: 5rem;
-        padding-right: 5rem;
+    }
+
+    /* Glassmorphism sidebar */
+    [data-testid="stSidebar"] {
+        background: rgba(10, 15, 25, 0.7) !important;
+        backdrop-filter: blur(20px) !important;
+        border-right: 1px solid rgba(255, 255, 255, 0.1);
+    }
+
+    /* Styled metric cards */
+    [data-testid="stMetric"] {
+        background: rgba(255, 255, 255, 0.03);
+        padding: 15px 20px;
+        border-radius: 12px;
+        border: 1px solid rgba(255, 255, 255, 0.05);
+        transition: transform 0.3s ease;
+    }
+    [data-testid="stMetric"]:hover {
+        transform: translateY(-5px);
+        background: rgba(255, 255, 255, 0.05);
     }
 
     .main {
-        background-color: #0e1117;
+        background-color: #05070a;
     }
     .stApp {
-        background: radial-gradient(circle at top right, #1a1c23 0%, #0e1117 100%);
+        background: radial-gradient(circle at top right, #0d1117 0%, #05070a 100%);
     }
-    h1, h2, h3 {
-        color: #ffffff;
-        font-family: 'Inter', sans-serif;
+    
+    h1, h2, h3, p {
+        font-family: 'Outfit', 'Inter', sans-serif;
     }
-    .stSidebar {
-        background-color: rgba(31, 33, 40, 0.8);
-        backdrop-filter: blur(10px);
+
+    /* Neon Accent Text */
+    .neon-text {
+        color: #00f2ff;
+        text-shadow: 0 0 10px rgba(0, 242, 255, 0.5);
+    }
+    
+    /* Responsive adjustment for small screens */
+    @media (max-width: 640px) {
+        .block-container { padding: 1rem; }
     }
 </style>
 """, unsafe_allow_html=True)
 
-st.title("💸 Cross-Asset Correlation Analysis")
-st.markdown("Compare Money Supply metrics against real and financial assets.")
+# Session State for Story Presets
+if 'current_story' not in st.session_state:
+    st.session_state.current_story = "Reset"
+    
+def select_story(story_name):
+    st.session_state.current_story = story_name
+    story = MACRO_STORIES[story_name]
+    # We will use these to populate the sidebar widget defaults
+    st.session_state.selected_refs = story["refs"]
+    st.session_state.selected_assets = story["assets"]
+    st.session_state.time_range = story["range"]
+    st.session_state.denominate_in = story["denom"]
+    st.session_state.norm_mode = story["mode"]
+    if story["range"] == "Custom":
+        st.session_state.start_date = datetime.strptime(story["start"], "%Y-%m-%d")
+        st.session_state.end_date = datetime.strptime(story["end"], "%Y-%m-%d")
+    st.rerun()
+
+# Header Section
+st.title("💸 Cross-Asset")
+st.markdown("Discover how currency debasement drives global asset prices.")
+
+# --- Macro Stories (Collapsible) ---
+with st.expander("🕵️ Discovery: Macro Stories", expanded=False):
+    cols = st.columns(len(MACRO_STORIES))
+    for i, story_name in enumerate(MACRO_STORIES.keys()):
+        if cols[i].button(story_name, use_container_width=True):
+            select_story(story_name)
 
 # Sidebar Controls
-st.sidebar.header("Configuration")
+st.sidebar.title("� Settings")
+st.sidebar.caption(f"Currently viewing: {st.session_state.current_story}")
 
-# 1. Reference Metrics (Money Supply / CPI)
-st.sidebar.subheader("Reference Metrics")
+# 1. Reference Metrics
 selected_refs = st.sidebar.multiselect(
-    "Select Money Supply or Inflation",
+    "Reference Metrics",
     options=list(FRED_SERIES.keys()),
-    default=["M2 Money Supply"],
-    help="Reference metrics like M2 (Money Supply) or CPI (Inflation) represent the 'supply' side of the economy. Use these to see how asset prices react to changes in the total amount of money in circulation."
+    default=st.session_state.get('selected_refs', ["M2 Money Supply"]),
+    help="Represent 'money supply' or 'inflation'. These define the value of our denominator (USD). Note: 'M1 Money Supply' had a major accounting change in May 2020, causing a vertical spike that can distort long-term charts. M2 is more consistent."
 )
 
 # 2. Asset Classes
-st.sidebar.subheader("Asset Classes")
 selected_assets = st.sidebar.multiselect(
-    "Select Assets to Compare",
+    "Assets to Track",
     options=list(ASSET_TICKERS.keys()),
-    default=["Gold", "S&P 500"],
-    help="Select one or more financial assets to track. These are the 'demand' side - items of value that you can buy with your money."
+    default=st.session_state.get('selected_assets', ["Gold", "S&P 500"]),
+    help="Items of value people buy to preserve purchasing power."
 )
 
-# 3. Time Range
-st.sidebar.subheader("Timeline")
+# 3. Timeline
 time_range = st.sidebar.selectbox(
-    "Select Period",
+    "Timeline",
     options=["1y", "5y", "10y", "20y", "max", "Custom"],
-    index=2,
-    help="Choose the historical window you want to analyze. Macro trends like money supply usually take years to play out, so longer timeframes (10Y+) are often more revealing."
+    index=["1y", "5y", "10y", "20y", "max", "Custom"].index(st.session_state.get('time_range', "10y")),
+    help="Longer timeframes reveal deeper macro truths."
 )
 
 start_date = None
 end_date = None
-
 if time_range == "Custom":
     col1, col2 = st.sidebar.columns(2)
-    start_date = col1.date_input("Start Date", datetime.now() - timedelta(days=365*10))
-    end_date = col2.date_input("End Date", datetime.now())
+    start_date = col1.date_input("Start", value=st.session_state.get('start_date', datetime.now() - timedelta(days=365*10)))
+    end_date = col2.date_input("End", value=st.session_state.get('end_date', datetime.now()))
 
-# 4. Portfolio Builder (New Section)
+# 4. Portfolio Builder
 st.sidebar.divider()
 st.sidebar.subheader("🏗 Portfolio Builder")
-enable_portfolio = st.sidebar.checkbox("Analyze custom portfolio", help="Combine multiple assets into one 'super-asset'. For example, if you hold 50% Stocks and 50% Gold, this will show you the combined performance of that basket.")
+enable_portfolio = st.sidebar.checkbox("Analyze custom portfolio", help="Combine multiple assets into one 'super-asset'.")
 portfolio_weights = {}
-
 if enable_portfolio:
     for asset in selected_assets:
-        weight = st.sidebar.slider(f"Weight: {asset}", 0, 100, 50)
-        portfolio_weights[asset] = weight
+        portfolio_weights[asset] = st.sidebar.slider(f"Weight: {asset}", 0, 100, 50)
 
 # 5. Technical Indicators & Visuals
 st.sidebar.divider()
 st.sidebar.subheader("📊 Visual Overlays")
-show_sma = st.sidebar.checkbox("SMA (200-day)", help="Simple Moving Average: The average price over the last 200 days. It helps smooth out daily noise to show the long-term trend. If the price is above the line, the trend is generally considered 'Up'.")
-show_bb = st.sidebar.checkbox("Bollinger Bands", help="A tool that shows the 'typical' price range for an asset. If the price touches the upper or lower bands, it may be moving too fast relative to its recent history.")
-show_events = st.sidebar.checkbox("Show Macro Events", value=True, help="Mark significant moments in history (like major crises or stimulus packages) to see how they impacted the data.")
-show_regimes = st.sidebar.checkbox("Show Economic Regimes", help="Highlights periods of high liquidity growth (M2 > 5% annual rate). Green backgrounds indicate 'Easy Money' regimes.")
+show_sma = st.sidebar.checkbox("SMA (200-day)", help="Simple Moving Average.")
+show_bb = st.sidebar.checkbox("Bollinger Bands", help="Price volatility bands.")
+show_events = st.sidebar.checkbox("Show Macro Events", value=True, help="Historical markers.")
+show_regimes = st.sidebar.checkbox("Show Economic Regimes", value=True, help="Highlights periods of high liquidity growth.")
 
 # 6. Real Return (Denominator)
 st.sidebar.divider()
@@ -109,41 +171,24 @@ st.sidebar.subheader("⚖️ Real Return Mode")
 denominate_in = st.sidebar.selectbox(
     "Denominate Assets In:",
     options=["USD", "Gold", "M2 Money Supply", "CPI (Inflation)"],
-    index=0,
-    help="By default, assets are measured in Dollars (USD). Changing this allows you to see 'Real Returns'. For example, denominating the S&P 500 in 'Gold' tells you if Stocks are actually getting more valuable, or if the Dollar is just getting weaker."
+    index=["USD", "Gold", "M2 Money Supply", "CPI (Inflation)"].index(st.session_state.get('denominate_in', "USD")),
 )
 
 # 7. Correlation Analysis
 st.sidebar.divider()
 st.sidebar.subheader("⏩ Lead/Lag Shift")
-lead_lag_months = st.sidebar.slider("Shift Assets (Months)", -24, 24, 0, help="Positive shifts OTHER assets forward (Ref leads)")
+lead_lag_months = st.sidebar.slider("Shift Assets (Months)", -24, 24, 0)
 
 # 8. Normalization & Scaling
 st.sidebar.divider()
-st.sidebar.subheader("📐 Normalization & Scaling")
+st.sidebar.subheader("📐 Normalization")
 norm_mode = st.sidebar.radio(
     "Adjustment Mode",
     options=["Raw Data", "Index=100", "% Change", "Log Scale"],
-    index=1,
-    help="""
-    - **Raw Data**: Actual prices/levels.
-    - **Index=100**: Resets all assets to 100 at the start. Great for seeing who won the race over time!
-    - **% Change**: Daily/Monthly growth rates.
-    - **Log Scale**: Compresses large price jumps. Useful for comparing tiny assets with huge ones (like Bitcoin).
-    """
+    index=["Raw Data", "Index=100", "% Change", "Log Scale"].index(st.session_state.get('norm_mode', "Index=100")),
 )
 
-# 9. Application Logic
-
-# Main Application Constants
-HISTORICAL_EVENTS = [
-    {"date": "1971-08-15", "label": "Nixon shock (End of Gold Standard)"},
-    {"date": "2008-09-15", "label": "Lehman Brothers Bankruptcy"},
-    {"date": "2020-03-15", "label": "COVID Stimulus Start"},
-    {"date": "2022-03-16", "label": "Fed Begins Rate Hikes"}
-]
-
-# Main Application Logic
+# --- Main Application Logic ---
 if not selected_refs and not selected_assets:
     st.info("Please select at least one metric or asset in the sidebar.")
 else:
@@ -153,36 +198,58 @@ else:
 
     # Fetch data (Cached)
     with st.spinner("Aligning historical data..."):
-        fetch_period = time_range if time_range != "Custom" else "max"
-        combined_df = get_combined_data(selected_refs, selected_assets, period=fetch_period)
+        # Always fetch maximum available history to allow flexible slicing and lead/lag
+        combined_df = get_combined_data(selected_refs, selected_assets, period="max")
         
-        if time_range == "Custom" and not combined_df.empty:
-            start_ts = pd.to_datetime(start_date)
-            end_ts = pd.to_datetime(end_date)
-            combined_df = combined_df.loc[start_ts:end_ts]
+        # Slice the combined_df based on user's Timeline selection
+        if not combined_df.empty:
+            now = combined_df.index[-1]
+            if time_range == "1y":
+                combined_df = combined_df.loc[now - timedelta(days=365):]
+            elif time_range == "5y":
+                combined_df = combined_df.loc[now - timedelta(days=5*365):]
+            elif time_range == "10y":
+                combined_df = combined_df.loc[now - timedelta(days=10*365):]
+            elif time_range == "20y":
+                combined_df = combined_df.loc[now - timedelta(days=20*365):]
+            elif time_range == "Custom":
+                start_ts = pd.to_datetime(start_date)
+                end_ts = pd.to_datetime(end_date)
+                combined_df = combined_df.loc[start_ts:end_ts]
 
     if combined_df.empty:
         st.error("No data found for the selected combination and timeframe.")
     else:
         # --- APPLIED ANALYTICS ---
         
-        # 1. Real Return Division
+        # 1. Real Return (Denominator) Logic
         if denominate_in != "USD":
             denom_series = None
-            if denominate_in == "Gold" and "Gold" in combined_df.columns:
-                denom_series = combined_df["Gold"]
-            elif denominate_in in combined_df.columns:
+            # Case A: Denominator is already in the dataframe (it was selected by user)
+            if denominate_in in combined_df.columns:
                 denom_series = combined_df[denominate_in]
+            
+            # Case B: Denominator needs to be fetched in background
             else:
-                # Force fetch denominator if it wasn't selected
-                with st.spinner(f"Fetching {denominate_in} for denominator..."):
-                    denom_df = get_combined_data([denominate_in], [], period=fetch_period)
+                with st.spinner(f"Fetching {denominate_in} denominator..."):
+                    # Route to correct source
+                    if denominate_in in FRED_SERIES:
+                        denom_df = get_combined_data([denominate_in], [], period="max")
+                    elif denominate_in in ASSET_TICKERS:
+                        denom_df = get_combined_data([], [denominate_in], period="max")
+                    else:
+                        denom_df = pd.DataFrame()
+                    
                     if not denom_df.empty:
                         denom_series = denom_df[denominate_in]
-            
+
             if denom_series is not None:
-                # Align and divide
-                combined_df = combined_df.divide(denom_series, axis=0).dropna()
+                # CRITICAL: Densify the denominator to match daily asset data
+                # Re-index to the main dataframe's daily index and forward-fill the gaps
+                denom_series = denom_series.reindex(combined_df.index).ffill()
+                
+                # Divide and update
+                combined_df = combined_df.divide(denom_series, axis=0)
                 st.info(f"Visualizing relative value in terms of **{denominate_in}**")
 
         # 2. Portfolio Calculation
@@ -202,20 +269,80 @@ else:
             label_visibility="collapsed"
         )
         
-        # Normalize data based on mode (Use shifted_df so chart reflects the shift)
+        # Normalize data (using non-shifted for TS view)
         plot_df = normalize_data(shifted_df, mode=norm_mode)
 
-        if st.session_state.view_mode == "📈 Time Series View":
+        # --- Analysis Tools (Collapsible) ---
+        with st.expander("🏆 Analysis: Leaderboard & Macro Insights", expanded=False):
+            # --- 🏆 INFLATION DEFEATER LEADERBOARD ---
+            st.subheader("🏆 The Inflation Defeater Leaderboard")
+            st.caption("Which assets actually protected your purchasing power over this period?")
+            
+            # Calculate Returns relative to the first reference metric
+            if selected_refs:
+                ref_col = selected_refs[0]
+                leaderboard_data = []
+                
+                # Start and End values for CAGR-like comparison
+                start_prices = combined_df.apply(lambda x: x.dropna().iloc[0] if not x.dropna().empty else np.nan)
+                end_prices = combined_df.iloc[-1]
+                
+                ref_growth = (end_prices[ref_col] / start_prices[ref_col]) - 1
+                
+                for asset in selected_assets + (["🏢 Custom Portfolio"] if enable_portfolio else []):
+                    if asset in combined_df.columns:
+                        asset_growth = (end_prices[asset] / start_prices[asset]) - 1
+                        outperformance = asset_growth - ref_growth
+                        leaderboard_data.append({
+                            "Asset": asset,
+                            "Total Return": f"{asset_growth:.1%}",
+                            "Real Return (Over {ref_col})": f"{outperformance:.1%}",
+                            "Status": "✅ BEAT" if outperformance > 0 else "❌ LOST"
+                        })
+                
+                lb_df = pd.DataFrame(leaderboard_data).sort_values("Real Return (Over {ref_col})", ascending=False)
+                st.table(lb_df)
+
             st.divider()
+
+            # --- 🤖 MACRO INSIGHTS ---
+            st.subheader("🤖 Macro Insights")
+            
+            # Dynamic Insight Generation
+            insights = []
+            if selected_refs and selected_assets:
+                # 1. Correlation Insight
+                monthly_temp = shifted_df.resample('ME').last().pct_change().corr()
+                top_corr_asset = selected_assets[0]
+                corr_val = monthly_temp.loc[selected_refs[0], top_corr_asset]
+                insights.append(f"• **Correlation**: {top_corr_asset} has a **{abs(corr_val):.0%}** {'positive' if corr_val > 0 else 'negative'} link with {selected_refs[0]}.")
+                
+                # 2. Beta Insight
+                beta, r2 = calculate_regression_stats(shifted_df[selected_refs[0]].pct_change(), shifted_df[top_corr_asset].pct_change())
+                insights.append(f"• **Sensitivity**: For every 1% move in {selected_refs[0]}, {top_corr_asset} historically moves **{beta:.2f}%**.")
+                
+                # 3. Regime Insight
+                if "M2 Money Supply" in combined_df.columns:
+                    current_m2_growth = combined_df["M2 Money Supply"].pct_change(periods=252).iloc[-1]
+                    if current_m2_growth > 0.02:
+                        insights.append(f"• **Regime Warning**: Current M2 growth is **{current_m2_growth:.1%}**. We are in an **'Easy Money'** environment where hard assets typically thrive.")
+                    else:
+                        insights.append(f"• **Regime Warning**: Current M2 growth is **{current_m2_growth:.1%}**. The macro environment is **'Tightening'**, which often pressures risk assets.")
+
+            for insight in insights:
+                st.write(insight)
+
+        if st.session_state.view_mode == "📈 Time Series View":
             fig = go.Figure()
             
-            # Base Plots
-            for col in plot_df.columns:
+            # Base Plots (Neon Style)
+            for i, col in enumerate(plot_df.columns):
                 fig.add_trace(go.Scatter(
                     x=plot_df.index,
                     y=plot_df[col],
                     mode='lines',
                     name=col,
+                    line=dict(width=3 if "Portfolio" in col else 2),
                     hovertemplate='%{y:.2f}<extra></extra>'
                 ))
 
@@ -262,9 +389,10 @@ else:
                 else:
                     # Fetch M2 specifically for shading if not selected
                     with st.spinner("Calculating regimes..."):
-                        regime_df = get_combined_data(["M2 Money Supply"], [], period=fetch_period)
+                        regime_df = get_combined_data(["M2 Money Supply"], [], period="max")
                         if not regime_df.empty:
-                            regime_series = regime_df["M2 Money Supply"]
+                            # Align regime data with the active chart timeframe
+                            regime_series = regime_df.loc[combined_df.index[0]:combined_df.index[-1]]["M2 Money Supply"]
                 
                 if regime_series is not None:
                     # Calculate 1-year growth (Approx 252 trading days or 12 months)
@@ -368,6 +496,40 @@ else:
             )
             st.plotly_chart(fig_heatmap, width='stretch')
 
+            # --- 🕸️ CORRELATION SPIDER MAP ---
+            st.divider()
+            st.subheader("🕸️ Asset Sensitivity (Spider Map)")
+            st.caption("How sensitive is each asset to the different Macro forces?")
+            
+            factors = ["M2 Money Supply", "CPI (Inflation)", "US Dollar Index", "Yield Curve (10Y-2Y)"]
+            available_factors = [f for f in factors if f in combined_df.columns]
+            
+            if len(available_factors) >= 2:
+                fig_spider = go.Figure()
+                for asset in selected_assets:
+                    values = []
+                    for fact in available_factors:
+                        # Use absolute correlation for spider map
+                        c = combined_df[asset].pct_change().corr(combined_df[fact].pct_change())
+                        values.append(abs(c))
+                    
+                    fig_spider.add_trace(go.Scatterpolar(
+                        r=values,
+                        theta=available_factors,
+                        fill='toself',
+                        name=asset
+                    ))
+                
+                fig_spider.update_layout(
+                    polar=dict(radialaxis=dict(visible=True, range=[0, 1])),
+                    template="plotly_dark",
+                    showlegend=True,
+                    height=500
+                )
+                st.plotly_chart(fig_spider, width='stretch')
+            else:
+                st.info("Select more Macro Reference metrics (like DXY or Yield Curve) to see the Sensitivity Spider Map.")
+
         elif st.session_state.view_mode == "🎯 Scatter Analysis":
             st.divider()
             st.subheader("Scatter Relationship")
@@ -431,20 +593,17 @@ else:
             amount = col1.number_input("Original Amount ($)", value=1000.0)
             base_date = col2.date_input("Comparison Start Date", value=combined_df.index[0])
             
-            # Find closest date in index
+            # Find closest date
             start_ts = pd.to_datetime(base_date)
-            if start_ts < combined_df.index[0]:
-                st.warning("Start date is before available data. Using earliest possible date.")
-                start_ts = combined_df.index[0]
-            
             idx = combined_df.index.get_indexer([start_ts], method='nearest')[0]
-            start_prices = combined_df.iloc[idx]
-            current_prices = combined_df.iloc[-1]
             
-            # Change in purchasing power
             pp_results = []
             for asset in combined_df.columns:
-                change_factor = current_prices[asset] / start_prices[asset]
+                start_p = combined_df[asset].iloc[idx]
+                if pd.isna(start_p):
+                    continue
+                end_p = combined_df[asset].iloc[-1]
+                change_factor = end_p / start_p
                 current_value = amount / change_factor
                 pp_results.append({
                     "Asset": asset,
@@ -452,7 +611,10 @@ else:
                     "Purchasing Power Change": f"{(1/change_factor - 1):.2%}"
                 })
             
-            st.table(pd.DataFrame(pp_results))
+            if pp_results:
+                st.table(pd.DataFrame(pp_results))
+            else:
+                st.warning("No asset data available for the selected comparison date.")
             st.info(f"Summary: A ${amount:,.0f} sum from {combined_df.index[idx].strftime('%Y-%m-%d')} is now worth the amounts above in terms of the assets' current prices.")
 
         # 9. Export Data (Sidebar)

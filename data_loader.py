@@ -114,7 +114,12 @@ def get_combined_data(fred_series_list, asset_ticker_list, period="10y"):
     combined_df = pd.concat(all_dfs, axis=1)
     
     # Forward fill missing values (common in macro data vs daily assets)
-    combined_df = combined_df.ffill().dropna()
+    combined_df = combined_df.ffill()
+    
+    # Drop rows where EVERYTHING is NaN (no data for any selected metric)
+    # This prevents the chart from being clipped to the youngest asset's start date.
+    # Older assets (like Gold/S&P) will now show their full history since 1970s.
+    combined_df = combined_df.dropna(how='all')
     
     return combined_df
 
@@ -126,7 +131,8 @@ def normalize_data(df, mode="Index=100"):
         return df
         
     if mode == "Index=100":
-        return (df / df.iloc[0]) * 100
+        # Normalize each column relative to its first available value
+        return (df / df.apply(lambda x: x.dropna().iloc[0] if not x.dropna().empty else 1)) * 100
     elif mode == "% Change":
         return df.pct_change() * 100
     elif mode == "Log Scale":
@@ -159,10 +165,8 @@ def apply_lead_lag(df, focus_col, shift_months=0):
     shifted_df = df.copy()
     other_cols = [c for c in df.columns if c != focus_col]
     
-    # Approx 30 days per month shift
-    # Shift forward means Focus leads.
     shifted_df[other_cols] = shifted_df[other_cols].shift(shift_months * 30)
-    return shifted_df.dropna()
+    return shifted_df.dropna(how='all')
 
 def calculate_portfolio(df, weights_dict):
     """Calculate a weighted portfolio index from columns."""
