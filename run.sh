@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # Configuration
-VENV_DIR=".venv"
+VENV_DIR="venv"
 PORT=8501
 
 echo "🚀 Initializing CrossAsset Financial Analysis Tool..."
@@ -25,5 +25,5 @@ echo "🌐 Launching browser..."
 open "http://localhost:$PORT"
 
 # 5. Run Streamlit app
-echo "✨ Starting Streamlit server on port $PORT..."
-streamlit run app.py --server.port $PORT --browser.gatherUsageStats false
+nohup streamlit run app.py --server.port $PORT --browser.gatherUsageStats false > /dev/null 2>&1 &
+echo "✅ Application running in background!"

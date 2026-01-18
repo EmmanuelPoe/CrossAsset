@@ -77,6 +77,58 @@ def fetch_yfinance_data(ticker, period="max"):
         st.error(f"Error fetching YFinance data for {ticker}: {e}")
         return pd.DataFrame()
 
+def fetch_extended_gold_data(period="max"):
+    """
+    Fetch Gold data splicing historical monthly data (from ~1833) 
+    with recent daily data from Yahoo Finance.
+    """
+    # 1. Fetch recent data from Yahoo (GC=F)
+    recent_df = fetch_yfinance_data("GC=F", period=period)
+    
+    # If period is short, we might not need history, but we'll fetch to be safe or optimize
+    # For now, if period is '1y', '5y', '10y', the Yahoo data is sufficient.
+    # We only REALLY need this for 'max' or 'Custom'
+    if period in ["1y", "5y", "10y", "20y"]:
+         return recent_df
+
+    # 2. Fetch Historical Data (CSV from GitHub - monthly)
+    # Source: https://github.com/datasets/gold-prices
+    hist_url = "https://raw.githubusercontent.com/datasets/gold-prices/master/data/monthly.csv"
+    try:
+        response = requests.get(hist_url, timeout=5)
+        if response.status_code == 200:
+            hist_df = pd.read_csv(io.StringIO(response.text))
+            # Format: Date (YYYY-MM), Price
+            hist_df["Date"] = pd.to_datetime(hist_df["Date"])
+            hist_df.set_index("Date", inplace=True)
+            hist_df.columns = ["Gold"]
+            
+            # Resample to end of month or similar to match typical monthly data
+            # But let's just keep it as is.
+            
+            if not recent_df.empty:
+                # 3. Splice
+                # Find where Yahoo data starts
+                yahoo_start = recent_df.index[0]
+                
+                # Cut history before Yahoo starts
+                hist_subset = hist_df[hist_df.index < yahoo_start]
+                
+                # Rename recent_df column to "Gold" to match
+                recent_df.columns = ["Gold"]
+                
+                # Combine
+                combined = pd.concat([hist_subset, recent_df], axis=0)
+                return combined
+            else:
+                return hist_df
+        else:
+            return recent_df
+    except Exception as e:
+        # Fallback to just Yahoo if historical fetch fails
+        return recent_df
+
+
 @st.cache_data(ttl=3600)
 def get_combined_data(fred_series_list, asset_ticker_list, period="10y"):
     """
@@ -102,7 +154,11 @@ def get_combined_data(fred_series_list, asset_ticker_list, period="10y"):
     for name in asset_ticker_list:
         ticker = ASSET_TICKERS.get(name)
         if ticker:
-            df = fetch_yfinance_data(ticker, period=period)
+            if name == "Gold":
+                df = fetch_extended_gold_data(period=period)
+            else:
+                df = fetch_yfinance_data(ticker, period=period)
+            
             if not df.empty:
                 df.columns = [name]
                 all_dfs.append(df)

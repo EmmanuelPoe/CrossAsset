@@ -14,7 +14,7 @@ st.set_page_config(page_title="Financial Asset vs Money Supply", layout="wide")
 
 # Premium UI Constants
 MACRO_STORIES = {
-    "Reset": {"refs": ["M2 Money Supply"], "assets": ["Gold", "S&P 500"], "range": "10y", "denom": "USD", "mode": "Index=100"},
+    "Reset": {"refs": ["M1 Money Supply"], "assets": ["Gold", "S&P 500"], "range": "10y", "denom": "USD", "mode": "Index=100"},
     "💻 Dot-Com Bubble": {"refs": ["M2 Money Supply"], "assets": ["NASDAQ 100", "S&P 500"], "range": "Custom", "start": "1995-01-01", "end": "2003-01-01", "denom": "USD", "mode": "Index=100"},
     "🏠 2008 Housing Crisis": {"refs": ["M2 Money Supply", "Median House Price"], "assets": ["S&P 500", "Gold"], "range": "Custom", "start": "2006-01-01", "end": "2013-01-01", "denom": "USD", "mode": "Index=100"},
     "🖨 Money Printer (COVID)": {"refs": ["M2 Money Supply", "Monetary Base"], "assets": ["Bitcoin", "S&P 500", "Gold"], "range": "Custom", "start": "2020-01-01", "end": "2024-01-01", "denom": "USD", "mode": "Log Scale"},
@@ -30,14 +30,23 @@ HISTORICAL_EVENTS = [
 # Theme / Custom CSS for "Ultra-Premium" Glassmorphism
 st.markdown("""
 <style>
-    /* Premium UI cleanup */
-    #MainMenu {visibility: hidden;}
-    header {visibility: hidden;}
-    footer {visibility: hidden;}
-    
+    /* Hide Deploy Button and Main Menu */
+    .stDeployButton { display: none !important; }
+    #MainMenu { visibility: hidden !important; }
+
+    /* Remove top gap/padding - content starts at the very top */
     .block-container {
-        padding-top: 1rem;
-        padding-bottom: 0rem;
+        padding-top: 0rem !important;
+    }
+
+    /* Make header transparent and click-through, but keep buttons (sidebar toggle) clickable */
+    [data-testid="stHeader"] {
+        background: transparent !important;
+        pointer-events: none;
+    }
+
+    [data-testid="stHeader"] button {
+        pointer-events: auto !important;
     }
 
     /* Glassmorphism sidebar */
@@ -121,7 +130,7 @@ st.sidebar.caption(f"Currently viewing: {st.session_state.current_story}")
 selected_refs = st.sidebar.multiselect(
     "Reference Metrics",
     options=list(FRED_SERIES.keys()),
-    default=st.session_state.get('selected_refs', ["M2 Money Supply"]),
+    default=st.session_state.get('selected_refs', ["M1 Money Supply"]),
     help="Represent 'money supply' or 'inflation'. These define the value of our denominator (USD). Note: 'M1 Money Supply' had a major accounting change in May 2020, causing a vertical spike that can distort long-term charts. M2 is more consistent."
 )
 
@@ -343,7 +352,7 @@ else:
                     mode='lines',
                     name=col,
                     line=dict(width=3 if "Portfolio" in col else 2),
-                    hovertemplate='%{y:.2f}<extra></extra>'
+                    hovertemplate='<b>%{fullData.name}</b>: %{y:.2f}<extra></extra>'
                 ))
 
             # Technical Indicators
